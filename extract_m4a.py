@@ -1,17 +1,15 @@
 import base64
+import binascii
 import io
 import logging
 import re
 import struct
 from pathlib import Path
-import binascii
-import json
 
 from mutagen.mp4 import MP4
-from mutagen.id3 import ID3
 import mutagen.mp4
 
-from utils import major_key_conversion, minor_key_conversion, convert_key_to_camelot
+from utils import convert_key_to_camelot
 
 def read_null_terminated(fp: io.BytesIO) -> bytes:
     chunks = []
@@ -119,10 +117,11 @@ def parse_serato_hot_cues(tag_data) -> list:
         tag_data = tag_data.encode("utf-8")
 
     clean = tag_data.replace(b"\n", b"")
-    clean = re.sub(rb"[^a-zA-Z0-9+/=]", b"", clean)
+    clean = re.sub(rb"[^a-zA-Z0-9+/]", b"", clean)
 
-    if len(clean) % 4 != 0:
-        clean += b"=" * ((4 - len(clean) % 4))
+    missing = len(clean) % 4
+    if missing:
+        clean += b"=" * (4 - missing)
 
     try:
         outer_decoded = base64.b64decode(clean)
@@ -183,17 +182,23 @@ def parse_serato_hot_cues(tag_data) -> list:
     return cues
 
 def extract_metadata(file_path: str) -> dict:
-    results = {"metadata": {}, "hot_cues": [], "beatgrid":[]}
+    results = {"metadata": {}, "hot_cues": [], "beatgrid": []}
     track = Path(file_path)
 
     if not track.exists():
         logging.error("File not found: %s", file_path)
         return results
 
-    results["beatgrid"] = get_beatgrid(file_path)
+    try:
+        results["beatgrid"] = get_beatgrid(file_path)
+    except ValueError:
+        # Beatgrid tag not present or malformed — not fatal
+        pass
+    except Exception as e:
+        logging.warning("Error reading beatgrid from '%s': %s", file_path, e)
     candidates = []
 
-    if track.suffix.lower() == ".m4a":
+    if track.suffix.lower() in (".m4a", ".alac"):
         audio = MP4(str(track))
         results["metadata"]["title"] = audio.get("\xa9nam", ["Unknown Title"])[0]
         results["metadata"]["artist"] = audio.get("\xa9ART", ["Unknown Artist"])[0]
@@ -215,7 +220,7 @@ def extract_metadata(file_path: str) -> dict:
     for tag_key in candidates:
         tag_data = None
 
-        if track.suffix.lower() == ".m4a":
+        if track.suffix.lower() in (".m4a", ".alac"):
             tag_data = audio.get(tag_key, [None])[0]
 
         else:
@@ -244,7 +249,9 @@ def extract_metadata(file_path: str) -> dict:
 
 def decode_beatgrid(value):
     raw_bytes = bytes(value)
-    cleaned = raw_bytes.replace(b'\n', b'')
+    # Remove newlines and all '=' to avoid invalid-position padding
+    cleaned = re.sub(rb"[^a-zA-Z0-9+/=]", b"", raw_bytes)
+    cleaned = cleaned.rstrip(b"=")
 
     try:
         potential = cleaned[:-1]
@@ -253,7 +260,7 @@ def decode_beatgrid(value):
         if missing_padding:
             potential += b'=' * (4 - missing_padding)
 
-        decoded = base64.b64decode(potential, validate=True)
+        decoded = base64.b64decode(potential)
 
     except binascii.Error:
         missing_padding = len(cleaned) % 4
@@ -261,7 +268,7 @@ def decode_beatgrid(value):
         if missing_padding:
             cleaned += b'=' * (4 - missing_padding)
 
-        decoded = base64.b64decode(cleaned, validate=True)
+        decoded = base64.b64decode(cleaned)
 
     return decoded
 
@@ -274,7 +281,7 @@ def process_grid_data(grid_data):
     expected_length = 6 + (marker_count * 8) + 1
 
     if len(grid_data) != expected_length:
-        print(f"Warning: Decoded grid data length ({len(grid_data)}) does not match expected length ({expected_length}).")
+        logging.debug("Grid data length (%d) differs from expected (%d) — parsing anyway", len(grid_data), expected_length)
 
     markers_block = grid_data[6:6 + marker_count * 8]
     markers = []

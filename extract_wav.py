@@ -1,23 +1,17 @@
-import os
+import base64
+import io
+import logging
 import re
 import struct
-import base64
-import logging
-from pathlib import Path
-import io
-import json
-import sys
 from collections import namedtuple
 import mutagen
-from mutagen.id3 import GEOB 
+from mutagen.id3 import GEOB
 
-from utils import major_key_conversion, minor_key_conversion, convert_key_to_camelot
+from utils import convert_key_to_camelot
 
 
 NonTerminalBeatgridMarker = namedtuple("NonTerminalBeatgridMarker", ["position", "beats_till_next_marker"])
 TerminalBeatgridMarker = namedtuple("TerminalBeatgridMarker", ["position", "bpm"])
-
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 def parse_serato_hot_cues(base64_data):
     if not base64_data:

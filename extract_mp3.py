@@ -1,19 +1,15 @@
-import os
+import base64
+import io
+import logging
 import re
 import struct
-import base64
-import logging
-from pathlib import Path
-import io
-import json
-import sys
 from collections import namedtuple
 
 import mutagen
 from mutagen.id3 import ID3, GEOB
 from mutagen.mp3 import MP3
 
-from utils import major_key_conversion, minor_key_conversion, convert_key_to_camelot
+from utils import convert_key_to_camelot
 
 NonTerminalBeatgridMarker = namedtuple("NonTerminalBeatgridMarker", ["position", "beats_till_next_marker"])
 TerminalBeatgridMarker = namedtuple("TerminalBeatgridMarker", ["position", "bpm"])
@@ -121,6 +117,15 @@ def extract_metadata(input_file: str) -> dict:
 
     key = convert_key_to_camelot(key)
 
+    beatgrid = {}
+    try:
+        beatgrid = get_beatgrid(input_file)
+    except ValueError:
+        # Beatgrid tag not present — not fatal
+        pass
+    except Exception as e:
+        logging.warning("Error reading beatgrid from '%s': %s", input_file, e)
+
     return {
         "metadata": {
             "title": audio_metadata.get("TIT2", "Unknown"),
@@ -130,7 +135,7 @@ def extract_metadata(input_file: str) -> dict:
             "duration_sec": audio_metadata.get("TotalTime", 0)
         },
         "hot_cues": hot_cues,
-        "beatgrid": get_beatgrid(input_file)
+        "beatgrid": beatgrid
     }
 
 def parse_beatgrid_markers(fp):
